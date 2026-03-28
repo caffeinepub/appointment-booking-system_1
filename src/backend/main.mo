@@ -51,8 +51,6 @@ actor {
   let timeSlots = Map.empty<Nat, TimeSlot>();
   let userProfiles = Map.empty<Principal, UserProfile>();
 
-  func getId<T>(getId : T -> Nat) : (T -> Nat) { getId };
-
   module Appointment {
     public func getId(appointment : Appointment) : Nat { appointment.id };
     public func compare(appointment1 : Appointment, appointment2 : Appointment) : Order.Order {
@@ -114,18 +112,29 @@ actor {
     "CUST-" # padded;
   };
 
-  // Bootstrap: first caller becomes admin (one-time only, no secret needed)
+  func hasAnyAdminProfile() : Bool {
+    for ((_, profile) in userProfiles.entries()) {
+      switch (profile.role) {
+        case (#admin) { return true };
+        case (_) {};
+      };
+    };
+    false;
+  };
+
+  // Bootstrap: first caller becomes admin (one-time only, resets if profiles were wiped)
   public shared ({ caller }) func bootstrapAdmin(name : Text) : async () {
     if (caller.isAnonymous()) {
       Runtime.trap("Must be logged in to bootstrap admin");
     };
-    if (accessControlState.adminAssigned) {
+    // Allow re-setup if admin flag is set but no admin profiles exist (e.g. after upgrade)
+    if (accessControlState.adminAssigned and hasAnyAdminProfile()) {
       Runtime.trap("Admin already set up");
     };
-    // Set as AccessControl admin
+    // Reset flag and re-assign
+    accessControlState.adminAssigned := false;
     accessControlState.userRoles.add(caller, #admin);
     accessControlState.adminAssigned := true;
-    // Create user profile
     let profile : UserProfile = {
       name;
       role = #admin;
@@ -134,13 +143,13 @@ actor {
     userProfiles.add(caller, profile);
   };
 
-  // Check if admin has been set up yet (public, no auth required)
+  // Returns false if no admin profile actually exists (so setup screen shows after upgrade)
   public query func isAdminBootstrapped() : async Bool {
-    accessControlState.adminAssigned;
+    if (not accessControlState.adminAssigned) { return false };
+    hasAnyAdminProfile();
   };
 
   // User Profile Management
-  // No auth check -- callers can only read their own profile; unknown users return null
   public query ({ caller }) func getCallerUserProfile() : async ?UserProfile {
     if (caller.isAnonymous()) {
       return null;
@@ -181,7 +190,6 @@ actor {
 
     userProfiles.add(user, profile);
 
-    // Assign AccessControl role
     let acRole = switch (role) {
       case (#admin) { #admin };
       case (#pa) { #user };
@@ -249,7 +257,6 @@ actor {
 
     let appointment = getAppointmentInternal(id);
 
-    // Customers can only see their own appointments
     if (isCustomer(caller) and appointment.customerId != caller) {
       Runtime.trap("Unauthorized: Can only view your own appointments");
     };
@@ -262,7 +269,6 @@ actor {
       Runtime.trap("Unauthorized: Authentication required");
     };
 
-    // Only Admin/PA can see all appointments
     if (not isAdminOrPA(caller)) {
       Runtime.trap("Unauthorized: Only admin or PA can view all appointments");
     };
@@ -283,7 +289,6 @@ actor {
       Runtime.trap("Unauthorized: Only authenticated users can create appointments");
     };
 
-    // Verify the caller is a customer
     if (not isCustomer(caller)) {
       Runtime.trap("Unauthorized: Only customers can create appointments");
     };
@@ -311,7 +316,6 @@ actor {
       Runtime.trap("Unauthorized: Authentication required");
     };
 
-    // Only Admin/PA can accept appointments
     if (not isAdminOrPA(caller)) {
       Runtime.trap("Unauthorized: Only admin or PA can accept appointments");
     };
@@ -330,7 +334,6 @@ actor {
       Runtime.trap("Unauthorized: Authentication required");
     };
 
-    // Only Admin/PA can reject appointments
     if (not isAdminOrPA(caller)) {
       Runtime.trap("Unauthorized: Only admin or PA can reject appointments");
     };
@@ -349,7 +352,6 @@ actor {
       Runtime.trap("Unauthorized: Authentication required");
     };
 
-    // Only Admin/PA can complete appointments
     if (not isAdminOrPA(caller)) {
       Runtime.trap("Unauthorized: Only admin or PA can complete appointments");
     };
@@ -433,7 +435,6 @@ actor {
       Runtime.trap("Unauthorized: Authentication required");
     };
 
-    // Only Admin/PA can view stats
     if (not isAdminOrPA(caller)) {
       Runtime.trap("Unauthorized: Only admin or PA can view statistics");
     };
